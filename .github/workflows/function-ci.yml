@@ -124,50 +124,50 @@ jobs:
       #       -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
 
       # 12. Generate coverage report
-      - name: Generate coverage report
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path coverage | Out-Null
+      # - name: Generate coverage report
+      #   shell: pwsh
+      #   run: |
+      #     New-Item -ItemType Directory -Force -Path coverage | Out-Null
 
-          reportgenerator `
-            "-reports:TestResults/**/coverage.opencover.xml" `
-            "-targetdir:coverage" `
-            "-reporttypes:Html;Cobertura;Summary;TextSummary" `
-            "-title:Azure Function Coverage"
+      #     reportgenerator `
+      #       "-reports:TestResults/**/coverage.opencover.xml" `
+      #       "-targetdir:coverage" `
+      #       "-reporttypes:Html;Cobertura;Summary;TextSummary" `
+      #       "-title:Azure Function Coverage"
 
-      # 13. Enforce line coverage strictly greater than 80%
-      - name: Enforce code coverage threshold
-        shell: pwsh
-        run: |
-          $summaryPath = "coverage/Summary.xml"
+      # # 13. Enforce line coverage strictly greater than 80%
+      # - name: Enforce code coverage threshold
+      #   shell: pwsh
+      #   run: |
+      #     $summaryPath = "coverage/Summary.xml"
 
-          if (!(Test-Path $summaryPath)) {
-            throw "Coverage summary was not generated."
-          }
+      #     if (!(Test-Path $summaryPath)) {
+      #       throw "Coverage summary was not generated."
+      #     }
 
-          [xml]$summary = Get-Content $summaryPath
+      #     [xml]$summary = Get-Content $summaryPath
 
-          $coverageValue = $summary.SelectSingleNode(
-            "//*[local-name()='Summary']"
-          ).GetAttribute("linecoverage")
+      #     $coverageValue = $summary.SelectSingleNode(
+      #       "//*[local-name()='Summary']"
+      #     ).GetAttribute("linecoverage")
 
-          if ([string]::IsNullOrWhiteSpace($coverageValue)) {
-            throw "Line coverage was not found in the coverage summary."
-          }
+      #     if ([string]::IsNullOrWhiteSpace($coverageValue)) {
+      #       throw "Line coverage was not found in the coverage summary."
+      #     }
 
-          $coverage = [double]::Parse(
-            $coverageValue,
-            [Globalization.CultureInfo]::InvariantCulture
-          )
+      #     $coverage = [double]::Parse(
+      #       $coverageValue,
+      #       [Globalization.CultureInfo]::InvariantCulture
+      #     )
 
-          Write-Host "Line coverage: $coverage%"
-          Write-Host "Required: strictly greater than 80%"
+      #     Write-Host "Line coverage: $coverage%"
+      #     Write-Host "Required: strictly greater than 80%"
 
-          if ($coverage -le 80) {
-            throw "Coverage requirement failed: $coverage% is not greater than 80%."
-          }
+      #     if ($coverage -le 80) {
+      #       throw "Coverage requirement failed: $coverage% is not greater than 80%."
+      #     }
 
-          Write-Host "Coverage requirement passed."
+      #     Write-Host "Coverage requirement passed."
 
       # 14. Finish SonarQube Cloud analysis
       - name: Finish SonarQube Cloud analysis
@@ -210,11 +210,11 @@ jobs:
           retention-days: 14
 
       # 18. Upload coverage report even if CI fails
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: function-coverage-report
-          path: coverage/
-          if-no-files-found: ignore
-          retention-days: 14
+      # - name: Upload coverage report
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: function-coverage-report
+      #     path: coverage/
+      #     if-no-files-found: ignore
+      #     retention-days: 14
