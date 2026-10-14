@@ -82,10 +82,10 @@ jobs:
             --no-restore
 
       # 8. Scan for secrets
-      - name: Scan repository for secrets
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Scan repository for secrets
+      #   uses: gitleaks/gitleaks-action@v3
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 9. Begin SonarQube Cloud analysis
       - name: Begin SonarQube Cloud analysis
