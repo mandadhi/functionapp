@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "Function_Apps_Pipeline": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7050",
+      "launchBrowser": false
+    }
+  }
+}
