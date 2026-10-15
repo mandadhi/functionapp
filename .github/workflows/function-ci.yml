@@ -4,11 +4,11 @@ on:
   push:
     branches:
       - dev
-
+      - main
   pull_request:
     branches:
       - dev
-
+      - main
   workflow_dispatch:
 
 permissions:
@@ -19,202 +19,118 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DOTNET_VERSION: '10.0'
-
-  # Update these paths to match your repository.
-  SOLUTION_PATH: 'Function-Apps-Pipeline.slnx'
-  FUNCTION_PROJECT: 'Function-Apps-Pipeline.csproj'
-  # TEST_PROJECT: 'tests/YourFunction.Tests/YourFunction.Tests.csproj'
-
-  SONAR_PROJECT_KEY: 'mandadhi_functionapp'
-  SONAR_ORGANIZATION: 'mandadhi'
+  DOTNET_VERSION: "10.0.x"
+  SOLUTION_PATH: Function-Apps-Pipeline.slnx
+  FUNCTION_PROJECT: Function-Apps-Pipeline.csproj
+  SONAR_PROJECT_KEY: mandadhi_functionapp
+  SONAR_ORGANIZATION: mandadhi
 
 jobs:
-  ci:
-    name: Lint, Security, Build, Test and Package
-    runs-on: windows-latest
-
+  secret-scan:
+    name: Scan repository secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
-      # 1. Checkout source
-      - name: Checkout source
-        uses: actions/checkout@v6
+      - name: Checkout full history
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      # 2. Setup .NET
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Scan with Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: latest
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  ci:
+    name: Format, build, analyze, and package
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          cache: true
+          cache-dependency-path: Function-Apps-Pipeline.csproj
 
-      # 3. Setup Java for SonarQube scanner
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
+      - name: Set up Java 21 for SonarScanner
+        uses: actions/setup-java@v6
         with:
-          java-version: '21'
-          distribution: 'zulu'
+          distribution: zulu
+          java-version: "21"
 
-      # 4. Cache SonarQube Cloud packages
       - name: Cache SonarQube Cloud packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: ~\.sonar\cache
+          path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
-          restore-keys: |
-            ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
 
-      # 5. Install .NET tools
-      - name: Install .NET tools
-        shell: pwsh
+      - name: Install SonarScanner for .NET
         run: |
           dotnet tool install --global dotnet-sonarscanner
-          dotnet tool install --global dotnet-reportgenerator-globaltool
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
-      # 6. Restore dependencies
-      - name: Restore dependencies
-        run: dotnet restore "${{ env.SOLUTION_PATH }}"
+      - name: Restore solution dependencies
+        run: dotnet restore "${{ env.SOLUTION_PATH }}" -p:NuGetAuditMode=all -warnaserror:NU1903,NU1904
 
-      # 7. Verify code formatting
       - name: Verify code formatting
-        run: |
-          dotnet format "${{ env.SOLUTION_PATH }}" `
-            --verify-no-changes `
-            --no-restore
+        run: dotnet format "${{ env.SOLUTION_PATH }}" --verify-no-changes --no-restore
 
-      # 8. Scan for secrets
-      # - name: Scan repository for secrets
-      #   uses: gitleaks/gitleaks-action@v3
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 9. Begin SonarQube Cloud analysis
       - name: Begin SonarQube Cloud analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        shell: pwsh
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
-            throw "SONAR_TOKEN is missing from GitHub repository secrets."
-          }
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "SONAR_TOKEN is missing from GitHub repository secrets." >&2
+            exit 1
+          fi
 
-          dotnet sonarscanner begin `
-            /k:"${{ env.SONAR_PROJECT_KEY }}" `
-            /o:"${{ env.SONAR_ORGANIZATION }}" `
-            /d:sonar.token="$env:SONAR_TOKEN" `
-            /d:sonar.cs.opencover.reportsPaths="coverage/coverage.opencover.xml" `
+          dotnet sonarscanner begin \
+            /k:"${{ env.SONAR_PROJECT_KEY }}" \
+            /o:"${{ env.SONAR_ORGANIZATION }}" \
+            /d:sonar.token="$SONAR_TOKEN" \
             /d:sonar.qualitygate.wait=true
 
-      # 10. Build
-      - name: Build solution
-        run: |
-          dotnet build "${{ env.SOLUTION_PATH }}" `
-            --configuration Release `
-            --no-restore
+      - name: Build solution in Release
+        run: dotnet build "${{ env.SOLUTION_PATH }}" --configuration Release --no-restore
 
-      # 11. Run tests and collect coverage
-      # - name: Run unit tests
-      #   run: |
-      #     dotnet test "${{ env.TEST_PROJECT }}" `
-      #       --configuration Release `
-      #       --no-build `
-      #       --logger "trx;LogFileName=test-results.trx" `
-      #       --collect:"XPlat Code Coverage" `
-      #       --results-directory ./TestResults `
-      #       -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
-
-      # 12. Generate coverage report
-      # - name: Generate coverage report
-      #   shell: pwsh
-      #   run: |
-      #     New-Item -ItemType Directory -Force -Path coverage | Out-Null
-
-      #     reportgenerator `
-      #       "-reports:TestResults/**/coverage.opencover.xml" `
-      #       "-targetdir:coverage" `
-      #       "-reporttypes:Html;Cobertura;Summary;TextSummary" `
-      #       "-title:Azure Function Coverage"
-
-      # # 13. Enforce line coverage strictly greater than 80%
-      # - name: Enforce code coverage threshold
-      #   shell: pwsh
-      #   run: |
-      #     $summaryPath = "coverage/Summary.xml"
-
-      #     if (!(Test-Path $summaryPath)) {
-      #       throw "Coverage summary was not generated."
-      #     }
-
-      #     [xml]$summary = Get-Content $summaryPath
-
-      #     $coverageValue = $summary.SelectSingleNode(
-      #       "//*[local-name()='Summary']"
-      #     ).GetAttribute("linecoverage")
-
-      #     if ([string]::IsNullOrWhiteSpace($coverageValue)) {
-      #       throw "Line coverage was not found in the coverage summary."
-      #     }
-
-      #     $coverage = [double]::Parse(
-      #       $coverageValue,
-      #       [Globalization.CultureInfo]::InvariantCulture
-      #     )
-
-      #     Write-Host "Line coverage: $coverage%"
-      #     Write-Host "Required: strictly greater than 80%"
-
-      #     if ($coverage -le 80) {
-      #       throw "Coverage requirement failed: $coverage% is not greater than 80%."
-      #     }
-
-      #     Write-Host "Coverage requirement passed."
-
-      # 14. Finish SonarQube Cloud analysis
-      - name: Finish SonarQube Cloud analysis
+      - name: Finish SonarQube Cloud analysis and enforce Quality Gate
         if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          dotnet sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
 
-      # 15. Publish Azure Function
       - name: Publish Azure Function
-        if: success()
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        run: dotnet publish "${{ env.FUNCTION_PROJECT }}" --configuration Release --no-build --no-restore --output ./publish
+
+      - name: Create deployment ZIP with publish output at root
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
         run: |
-          dotnet publish "${{ env.FUNCTION_PROJECT }}" `
-            --configuration Release `
-            --output ./publish
+          test -f publish/host.json || { echo "Published output is missing host.json." >&2; exit 1; }
+          cd publish
+          zip -r ../function-app.zip .
+          test -s ../function-app.zip || { echo "Function App deployment ZIP was not generated." >&2; exit 1; }
 
-      # 16. Create deployment ZIP
-      - name: Create deployment ZIP
-        if: success()
-        shell: pwsh
-        run: |
-          Compress-Archive `
-            -Path ./publish/* `
-            -DestinationPath ./function-app.zip `
-            -Force
-
-          if (!(Test-Path ./function-app.zip)) {
-            throw "Function App deployment ZIP was not generated."
-          }
-
-      # 17. Upload deployment artifact
       - name: Upload Function App artifact
-        if: success()
-        uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: actions/upload-artifact@v7
         with:
           name: function-app-package
           path: function-app.zip
           if-no-files-found: error
           retention-days: 14
-
-      # 18. Upload coverage report even if CI fails
-      # - name: Upload coverage report
-      #   if: always()
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: function-coverage-report
-      #     path: coverage/
-      #     if-no-files-found: ignore
-      #     retention-days: 14
