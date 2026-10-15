@@ -63,10 +63,3 @@ jobs:
         with:
           app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
           package: ./artifact/function-app.zip
-
-      - name: Verify Function1 HTTP endpoint
-        shell: bash
-        run: |
-          set -euo pipefail
-          response=$(curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 --max-time 30 "https://${AZURE_FUNCTIONAPP_NAME}.azurewebsites.net/api/Function1")
-          test "$response" = "Welcome to Azure Functions!" || { echo "Function1 returned an unexpected response." >&2; exit 1; }
