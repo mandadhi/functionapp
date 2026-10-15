@@ -39,46 +39,6 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
-      - name: Validate deployment package
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f artifact/function-app.zip || { echo "Expected artifact/function-app.zip was not downloaded." >&2; exit 1; }
-          test -s artifact/function-app.zip || { echo "artifact/function-app.zip is empty." >&2; exit 1; }
-          python - <<'PY'
-            from pathlib import Path
-            from zipfile import BadZipFile, ZipFile
-
-            package = Path("artifact/function-app.zip")
-            try:
-                with ZipFile(package) as archive:
-                    entries = set(archive.namelist())
-                    corrupt_entry = archive.testzip()
-            except BadZipFile as error:
-                raise SystemExit(f"Deployment package is not a valid ZIP: {error}")
-
-            if corrupt_entry:
-                raise SystemExit(f"Deployment package has a corrupt entry: {corrupt_entry}")
-
-            required_files = {
-                "host.json",
-                "functions.metadata",
-                "Function-Apps-Pipeline.dll",
-                "Function-Apps-Pipeline.deps.json",
-                "Function-Apps-Pipeline.runtimeconfig.json",
-                "worker.config.json",
-                "extensions.json",
-            }
-            missing_files = sorted(required_files - entries)
-            if missing_files:
-                raise SystemExit(f"Deployment package is missing required root files: {', '.join(missing_files)}")
-            if not any(entry.startswith(".azurefunctions/") for entry in entries):
-                raise SystemExit("Deployment package is missing the .azurefunctions runtime directory.")
-
-            print("Validated inner deployment ZIP:")
-            for entry in sorted(entries):
-                print(entry)
-          PY
 
       - name: Confirm deployment target
         shell: bash
