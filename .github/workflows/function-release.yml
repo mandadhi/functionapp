@@ -1,0 +1,112 @@
+name: Azure Function CD
+
+on:
+  workflow_run:
+    workflows:
+      - Azure Function CI
+    types:
+      - completed
+    branches:
+      - dev
+      - main
+
+permissions:
+  actions: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy Azure Function
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      contains(fromJSON('["dev", "main"]'), github.event.workflow_run.head_branch)
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.workflow_run.head_branch == 'main' && 'prod' || 'dev' }}
+    env:
+      AZURE_FUNCTIONAPP_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - name: Download package from triggering CI run
+        uses: actions/download-artifact@v8
+        with:
+          name: function-app-package
+          path: artifact
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate deployment package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f artifact/function-app.zip || { echo "Expected artifact/function-app.zip was not downloaded." >&2; exit 1; }
+          test -s artifact/function-app.zip || { echo "artifact/function-app.zip is empty." >&2; exit 1; }
+          python - <<'PY'
+            from pathlib import Path
+            from zipfile import BadZipFile, ZipFile
+
+            package = Path("artifact/function-app.zip")
+            try:
+                with ZipFile(package) as archive:
+                    entries = set(archive.namelist())
+                    corrupt_entry = archive.testzip()
+            except BadZipFile as error:
+                raise SystemExit(f"Deployment package is not a valid ZIP: {error}")
+
+            if corrupt_entry:
+                raise SystemExit(f"Deployment package has a corrupt entry: {corrupt_entry}")
+
+            required_files = {
+                "host.json",
+                "functions.metadata",
+                "Function-Apps-Pipeline.dll",
+                "Function-Apps-Pipeline.deps.json",
+                "Function-Apps-Pipeline.runtimeconfig.json",
+                "worker.config.json",
+                "extensions.json",
+            }
+            missing_files = sorted(required_files - entries)
+            if missing_files:
+                raise SystemExit(f"Deployment package is missing required root files: {', '.join(missing_files)}")
+            if not any(entry.startswith(".azurefunctions/") for entry in entries):
+                raise SystemExit("Deployment package is missing the .azurefunctions runtime directory.")
+
+            print("Validated inner deployment ZIP:")
+            for entry in sorted(entries):
+                print(entry)
+          PY
+
+      - name: Confirm deployment target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_FUNCTIONAPP_NAME" || { echo "AZURE_FUNCTIONAPP_NAME is not configured for the selected GitHub Environment." >&2; exit 1; }
+          echo "Source branch: $SOURCE_BRANCH"
+          echo "Source commit: $SOURCE_SHA"
+          echo "CI run ID: $SOURCE_RUN_ID"
+          echo "GitHub Environment: ${{ github.event.workflow_run.head_branch == 'main' && 'prod' || 'dev' }}"
+          echo "Target Function App: $AZURE_FUNCTIONAPP_NAME"
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Azure Function
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+          package: ./artifact/function-app.zip
+
+      - name: Verify Function1 HTTP endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          response=$(curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 --max-time 30 "https://${AZURE_FUNCTIONAPP_NAME}.azurewebsites.net/api/Function1")
+          test "$response" = "Welcome to Azure Functions!" || { echo "Function1 returned an unexpected response." >&2; exit 1; }
