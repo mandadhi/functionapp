@@ -64,7 +64,7 @@ jobs:
           app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
           package: ./artifact/function-app.zip
 
-            - name: Apply Function App Settings from JSON
+      - name: Apply Function App Settings from JSON
         shell: bash
         env:
           FUNCTION_APP_SETTINGS_JSON: ${{ vars.FUNCTION_APP_SETTINGS_JSON }}
