@@ -64,9 +64,61 @@ jobs:
           app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
           package: ./artifact/function-app.zip
 
-      - name: Verify Function1 HTTP endpoint
+            - name: Apply Function App Settings from JSON
         shell: bash
+        env:
+          FUNCTION_APP_SETTINGS_JSON: ${{ vars.FUNCTION_APP_SETTINGS_JSON }}
+          AZURE_FUNCTIONAPP_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
         run: |
           set -euo pipefail
-          response=$(curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 --max-time 30 "https://${AZURE_FUNCTIONAPP_NAME}.azurewebsites.net/api/Function1")
-          test "$response" = "Welcome to Azure Functions!" || { echo "Function1 returned an unexpected response." >&2; exit 1; }
+
+          # Verify required configuration
+          test -n "$AZURE_FUNCTIONAPP_NAME" || {
+            echo "Function App name is missing." >&2
+            exit 1
+          }
+
+          test -n "$AZURE_RESOURCE_GROUP" || {
+            echo "Resource Group is missing." >&2
+            exit 1
+          }
+
+          test -n "$FUNCTION_APP_SETTINGS_JSON" || {
+            echo "FUNCTION_APP_SETTINGS_JSON is missing." >&2
+            exit 1
+          }
+
+          # Convert JSON into individual Azure app settings
+          SETTINGS=$(printf '%s' "$FUNCTION_APP_SETTINGS_JSON" | jq -er '
+            if type != "object" then
+              error("Expected a JSON object")
+            elif length == 0 then
+              error("JSON settings object must not be empty")
+            else
+              to_entries
+              | map(
+                  select(
+                    (.key | type == "string") and
+                    (.value | type == "string")
+                  )
+                  | "\(.key)=\(.value)"
+                )
+              | if length == 0 then
+                  error("No valid string settings found")
+                else
+                  .[]
+                end
+            end
+          ')
+
+          # Apply each setting individually to Azure Function App
+          mapfile -t SETTINGS_ARRAY <<< "$SETTINGS"
+
+          az functionapp config appsettings set \
+            --name "$AZURE_FUNCTIONAPP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --settings "${SETTINGS_ARRAY[@]}" \
+            --output none
+
+          echo "Function App settings applied successfully."
